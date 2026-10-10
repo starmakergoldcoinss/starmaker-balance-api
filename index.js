@@ -3,72 +3,116 @@ const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
+
 app.use(cors());
+app.use(express.json());
 
-// Render अपने आप PORT असाइन करता है
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
+const STARMAKER_API = 'https://pay.starmakerstudios.com/rapid/user';
+
+// Health check
+app.get('/', (req, res) => {
+    res.json({
+        status: 'success',
+        message: 'StarMaker Balance API is running',
+        endpoint: '/api/balance?id=YOUR_ID'
+    });
+});
+
+// API information
+app.get('/api', (req, res) => {
+    res.json({
+        status: 'success',
+        service: 'StarMaker Balance API',
+        version: '1.0.1',
+        endpoint: '/api/balance',
+        method: 'GET',
+        parameter: 'id'
+    });
+});
+
+// Balance lookup
 app.get('/api/balance', async (req, res) => {
-    // URL query से ID लें, वर्ना डिफ़ॉल्ट ID इस्तेमाल करें
-    const userId = req.query.id || "13380988276";
-    
-    // हर रिक्वेस्ट पर नया टाइमस्टैम्प जनरेट करना बेहतर रहता है
-    const ts = Math.floor(Date.now() / 1000).toString(); 
+    const userId = String(req.query.id || '').trim();
 
-    const url = "https://pay.starmakerstudios.com/rapid/user";
-    
+    if (!userId) {
+        return res.status(400).json({
+            status: 'error',
+            message: 'Missing ID. Use /api/balance?id=160008'
+        });
+    }
+
+    if (!/^\d+$/.test(userId)) {
+        return res.status(400).json({
+            status: 'error',
+            message: 'ID must contain digits only'
+        });
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+
     const params = {
-        category: "6",
+        category: '6',
         id: userId,
-        ts: ts
+        ts: timestamp
     };
 
     const headers = {
-        'User-Agent': "Mozilla/5.0 (Linux; U; Android 14; en-in; SM-E546B Build/UP1A.231005.007) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.88 Mobile Safari/537.36 HeyTapBrowser/45.11.5.1",
-        'Accept': "application/json, text/plain, */*",
-        'origin': "https://m.starmakerstudios.com",
-        'sec-fetch-site': "same-site",
-        'sec-fetch-mode': "cors",
-        'sec-fetch-dest': "empty",
-        'referer': "https://m.starmakerstudios.com/",
-        'accept-language': "en-IN,en-US;q=0.9,en;q=0.8"
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://m.starmakerstudios.com',
+        'Referer': 'https://m.starmakerstudios.com/'
     };
 
     try {
-        const response = await axios.get(url, { params, headers });
+        const response = await axios.get(STARMAKER_API, {
+            params,
+            headers,
+            timeout: 15000
+        });
+
         const data = response.data;
 
-        // API के असली स्ट्रक्चर के हिसाब से डेटा निकालें
-        const userInfo = data.data || data.user || data;
-        
-        // रिस्पॉन्स तैयार करें
-        const customResponse = {
-            status: "success",
-            user_id: userId,
-            balance: {
-                gold_coins: userInfo.gold_coin || userInfo.gold || 0,
-                silver_coins: userInfo.silver_coin || userInfo.silver || 0,
-                diamonds: userInfo.diamond || userInfo.diamonds || 0
-            },
-            // मैंने raw_data भी डाल दिया है ताकि अगर keys का नाम अलग हो तो आप JSON में देख सकें
-            raw_data: data 
-        };
+        return res.json({
+            status: 'success',
+            requested_id: userId,
+            upstream_status: response.status,
+            data: data
+        });
 
-        res.json(customResponse);
     } catch (error) {
-        res.status(500).json({ 
-            status: "error", 
-            message: "Failed to fetch data from StarMaker API",
-            details: error.message
+        const upstreamStatus = error.response?.status || null;
+
+        console.error('StarMaker API error:', {
+            id: userId,
+            status: upstreamStatus,
+            message: error.message
+        });
+
+        return res.status(502).json({
+            status: 'error',
+            requested_id: userId,
+            message: 'Unable to retrieve data from StarMaker API',
+            upstream_status: upstreamStatus,
+            details: error.code || error.message
         });
     }
 });
 
-// होमपेज राउट (ताकि Render पर "Not Found" न दिखे)
-app.get('/', (req, res) => {
-    res.send('StarMaker Balance API is running! Go to /api/balance?id=YOUR_ID to check balance.');
+// Handle unknown routes
+app.use((req, res) => {
+    res.status(404).json({
+        status: 'error',
+        message: 'Route not found',
+        available_routes: [
+            '/',
+            '/api',
+            '/api/balance?id=160008'
+        ]
+    });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
 });
